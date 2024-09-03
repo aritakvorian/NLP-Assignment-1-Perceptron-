@@ -2,8 +2,12 @@
 
 from sentiment_data import *
 from utils import *
-
+import random
+import math
 from collections import Counter
+import nltk
+from nltk.corpus import stopwords
+nltk.download('stopwords')
 
 
 class FeatureExtractor(object):
@@ -33,21 +37,102 @@ class UnigramFeatureExtractor(FeatureExtractor):
     """
     def __init__(self, indexer: Indexer):
         self.indexer = indexer
+        self.stopwords = set(stopwords.words('english'))
+        self.words_to_remove = {'the', 'and', 'a', 'it', 'if'}
+        self.negation_words = {'not', 'never', 'no', 'none', 'nobody', 'nothing', 'neither', 'nowhere'}
+
+    def handle_negations(self, sentence):
+        negated_sentence = []
+        negate = False
+        for word in sentence:
+            if word in self.negation_words:
+                negate = True
+                continue
+            if negate:
+                negated_sentence.append(f'not_{word}')
+                negate = False
+            else:
+                negated_sentence.append(word)
+        return negated_sentence
 
     def extract_features(self, sentence: List[str], add_to_indexer: bool = False) -> Counter:
+
+        lowercase_sentence = [word.lower() for word in sentence]
+        filtered_sentence = [word for word in lowercase_sentence if word not in self.stopwords]
+        filtered_sentence = [word for word in filtered_sentence if word.isalpha()]
+        filtered_sentence = [word for word in filtered_sentence if word not in self.words_to_remove]
+
+        filtered_sentence = self.handle_negations(filtered_sentence)
+
         features = Counter()
-        for word in sentence:
-            idx = self.indexer.add_and_get_index(word, add=add_to_indexer)
-            features[idx] += 1
+
+        for word in filtered_sentence:
+            if add_to_indexer:
+                index = self.indexer.add_and_get_index(word)
+            else:
+                index = self.indexer.index_of(word)
+            if index != -1:
+                features[index] += 1
+
         return features
+
+    def update_word_counts(self, sentences: List[List[str]]):
+        # Do nothing
+        pass
 
 
 class BigramFeatureExtractor(FeatureExtractor):
     """
     Bigram feature extractor analogous to the unigram one.
     """
+
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        self.stopwords = set(stopwords.words('english'))
+        self.words_to_remove = {'the', 'and', 'a', 'it', 'if'}
+        self.negation_words = {'not', 'never', 'no', 'none', 'nobody', 'nothing', 'neither', 'nowhere'}
+
+    def handle_negations(self, sentence):
+        negated_sentence = []
+        negate = False
+        for word in sentence:
+            if word in self.negation_words:
+                negate = True
+                continue
+            if negate:
+                negated_sentence.append(f'not_{word}')
+                negate = False
+            else:
+                negated_sentence.append(word)
+        return negated_sentence
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
+        lowercase_sentence = [word.lower() for word in sentence]
+        filtered_sentence = lowercase_sentence
+
+        # REMOVING BECAUSE BIGRAMS COVERS MOST OF THIS STUFF
+        #filtered_sentence = [word for word in lowercase_sentence if word not in self.stopwords]
+        #filtered_sentence = [word for word in filtered_sentence if word.isalpha()]
+        #filtered_sentence = [word for word in filtered_sentence if word not in self.words_to_remove]
+
+        # filtered_sentence = self.handle_negations(filtered_sentence)
+
+        features = Counter()
+
+        for i in range(len(filtered_sentence) - 1):
+            bigram = (filtered_sentence[i], filtered_sentence[i + 1])
+            if add_to_indexer:
+                index = self.indexer.add_and_get_index(bigram)
+            else:
+                index = self.indexer.index_of(bigram)
+            if index != -1:
+                features[index] += 1
+
+        return features
+
+    def update_word_counts(self, sentences: List[List[str]]):
+        # Do nothing
+        pass
 
 
 class BetterFeatureExtractor(FeatureExtractor):
@@ -55,8 +140,36 @@ class BetterFeatureExtractor(FeatureExtractor):
     Better feature extractor...try whatever you can think of!
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        self.min_freq = 2
+        self.stopwords = set(stopwords.words('english'))
+        self.word_counts = Counter()
 
+    def extract_features(self, sentence: List[str], add_to_indexer: bool = False) -> Counter:
+        lowercase_sentence = [word.lower() for word in sentence if word.isalpha()]
+        filtered_sentence = [word for word in lowercase_sentence if word not in self.stopwords]
+
+        features = Counter()
+
+        # Calculate simple frequency weighting
+        tf_counter = Counter(filtered_sentence)
+
+        for word, count in tf_counter.items():
+            if self.word_counts[word] >= self.min_freq:  # Discard rare words
+                if add_to_indexer:
+                    index = self.indexer.add_and_get_index(word)
+                else:
+                    index = self.indexer.index_of(word)
+                if index != -1:
+                    features[index] = count  # Simple frequency as the feature value
+
+        return features
+
+    def update_word_counts(self, sentences: List[List[str]]):
+        for sentence in sentences:
+            lowercase_sentence = [word.lower() for word in sentence if word.isalpha()]
+            filtered_sentence = [word for word in lowercase_sentence if word not in self.stopwords]
+            self.word_counts.update(filtered_sentence)
 
 class SentimentClassifier(object):
     """
@@ -90,8 +203,11 @@ class PerceptronClassifier(SentimentClassifier):
 
     def predict(self, sentence: List[str]) -> int:
         features = self.feat_extractor.extract_features(sentence, add_to_indexer=False)
-        score = sum(self.weights.get(f, 0) * count for f, count in features.items())
-        return 1 if score > 0 else 0
+        score = sum(self.weights[feature] * count for feature, count in features.items())
+        if score > 0.5:
+            return 1
+        else:
+            return 0
 
 
 class LogisticRegressionClassifier(SentimentClassifier):
@@ -100,8 +216,20 @@ class LogisticRegressionClassifier(SentimentClassifier):
     superclass. Hint: you'll probably need this class to wrap both the weight vector and featurizer -- feel free to
     modify the constructor to pass these in.
     """
-    def __init__(self):
-        raise Exception("Must be implemented")
+    def __init__(self, weights, feat_extractor, beta):
+        self.weights = weights
+        self.feat_extractor = feat_extractor
+        self.beta = beta
+
+    def predict(self, sentence):
+        features = self.feat_extractor.extract_features(sentence, add_to_indexer=False)
+        score = sum(self.weights[feature] * count for feature, count in features.items()) + self.beta
+        probability = 1 / (1 + math.exp(-score))
+
+        if probability > 0.5:
+            return 1
+        else:
+            return 0
 
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
@@ -112,14 +240,27 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
     :return: trained PerceptronClassifier model
     """
 
+    random.seed(42)
+    num_epochs = 10
+
     weights = Counter()
-    for epoch in range(5):  # You can choose more iterations
+    feat_extractor.update_word_counts([ex.words for ex in train_exs])
+
+    for epoch in range(num_epochs):
+        random.shuffle(train_exs)
+
         for ex in train_exs:
             features = feat_extractor.extract_features(ex.words, add_to_indexer=True)
-            prediction = 1 if sum(weights[f] * count for f, count in features.items()) > 0 else 0
+
+            score = sum(weights[feature] * count for feature, count in features.items())
+            prediction = 0
+            if score > 0:
+                prediction = 1
+
             if prediction != ex.label:
-                for f, count in features.items():
-                    weights[f] += count if ex.label == 1 else -count
+                for feature, count in features.items():
+                    weights[feature] += count if ex.label == 1 else -count
+
     return PerceptronClassifier(weights, feat_extractor)
 
 
@@ -130,7 +271,29 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
-    raise Exception("Must be implemented")
+    random.seed(42)
+    num_epochs = 10
+    learning_rate = 0.1
+
+    weights = Counter()
+    feat_extractor.update_word_counts([ex.words for ex in train_exs])
+    beta = 0.0
+
+    for epoch in range(num_epochs):
+        random.shuffle(train_exs)
+
+        for sentence in train_exs:
+            features = feat_extractor.extract_features(sentence.words, add_to_indexer=True)
+            score = sum(weights[feature] * count for feature, count in features.items()) + beta
+            probability = 1 / (1 + math.exp(-score))
+
+            error = sentence.label - probability
+
+            for feature, count in features.items():
+                weights[feature] += learning_rate * error * count
+            beta += learning_rate * error
+
+    return LogisticRegressionClassifier(weights, feat_extractor, beta)
 
 
 def train_model(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample]) -> SentimentClassifier:
