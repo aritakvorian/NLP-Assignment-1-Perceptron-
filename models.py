@@ -77,7 +77,6 @@ class UnigramFeatureExtractor(FeatureExtractor):
         return features
 
     def update_word_counts(self, sentences: List[List[str]]):
-        # Do nothing
         pass
 
 
@@ -131,7 +130,6 @@ class BigramFeatureExtractor(FeatureExtractor):
         return features
 
     def update_word_counts(self, sentences: List[List[str]]):
-        # Do nothing
         pass
 
 
@@ -151,17 +149,16 @@ class BetterFeatureExtractor(FeatureExtractor):
 
         features = Counter()
 
-        # Calculate simple frequency weighting
         tf_counter = Counter(filtered_sentence)
 
         for word, count in tf_counter.items():
-            if self.word_counts[word] >= self.min_freq:  # Discard rare words
+            if self.word_counts[word] >= self.min_freq:
                 if add_to_indexer:
                     index = self.indexer.add_and_get_index(word)
                 else:
                     index = self.indexer.index_of(word)
                 if index != -1:
-                    features[index] = count  # Simple frequency as the feature value
+                    features[index] = count
 
         return features
 
